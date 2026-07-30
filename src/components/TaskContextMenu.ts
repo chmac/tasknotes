@@ -43,6 +43,7 @@ import { downloadTaskICSFile, openCalendarURL } from "../ui/calendarExportAction
 import {
 	openMaterializedOccurrenceParent,
 	openOrCreateOccurrenceNote,
+	resolveOccurrenceNoteTargetDate,
 } from "../ui/occurrenceNoteActions";
 import { createTaskNotesLogger } from "../utils/tasknotesLogger";
 import type { UserMappedField } from "../types/settings";
@@ -955,7 +956,7 @@ export class TaskContextMenu {
 				await openOrCreateOccurrenceNote({
 					plugin,
 					parentTask: task,
-					targetDate: this.options.targetDate,
+					targetDate: resolveOccurrenceNoteTargetDate(task, this.options.targetDate),
 					onUpdate: this.options.onUpdate,
 				});
 			});
