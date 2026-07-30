@@ -14,6 +14,7 @@ import { getDatePart } from "../utils/dateUtils";
 import {
 	openMaterializedOccurrenceParent,
 	openOrCreateOccurrenceNote,
+	resolveOccurrenceNoteTargetDate,
 } from "../ui/occurrenceNoteActions";
 import { createTaskNotesLogger } from "../utils/tasknotesLogger";
 import { ProjectSelectModal } from "./ProjectSelectModal";
@@ -296,7 +297,7 @@ export class TaskActionPaletteModal extends FuzzySuggestModal<TaskAction> {
 					await openOrCreateOccurrenceNote({
 						plugin,
 						parentTask: task,
-						targetDate,
+						targetDate: resolveOccurrenceNoteTargetDate(task, targetDate),
 						openInNewLeaf: true,
 					});
 				},

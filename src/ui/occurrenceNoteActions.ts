@@ -1,7 +1,7 @@
 import { Notice, TFile } from "obsidian";
 import type TaskNotesPlugin from "../main";
 import type { TaskInfo } from "../types";
-import { formatDateForStorage } from "../utils/dateUtils";
+import { formatDateForStorage, getDatePart, parseDateToUTC } from "../utils/dateUtils";
 import { createTaskNotesLogger } from "../utils/tasknotesLogger";
 
 const tasknotesLogger = createTaskNotesLogger({ tag: "UI/OccurrenceNoteActions" });
@@ -35,6 +35,24 @@ export async function openTaskPath(options: OpenTaskPathOptions): Promise<void> 
 	}
 
 	await plugin.app.workspace.openLinkText(path, "", openInNewLeaf);
+}
+
+/**
+ * Resolves the target date for "open the current occurrence" actions on a recurring
+ * parent task. The parent's own `scheduled` field always tracks its current/next
+ * occurrence date (for either recurrence_anchor mode), so that's the correct date to
+ * look up or materialize - not whatever ambient date a task card happens to be
+ * rendered under. Falls back to the ambient date for non-recurring tasks, or recurring
+ * tasks with no scheduled date yet.
+ *
+ * Callers that mean a specific, user-chosen day (e.g. a mini-calendar day click)
+ * should keep passing that date directly instead of using this helper.
+ */
+export function resolveOccurrenceNoteTargetDate(parentTask: TaskInfo, fallbackDate: Date): Date {
+	if (parentTask.recurrence && parentTask.scheduled) {
+		return parseDateToUTC(getDatePart(parentTask.scheduled));
+	}
+	return fallbackDate;
 }
 
 export async function openOrCreateOccurrenceNote(

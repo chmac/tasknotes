@@ -52,6 +52,10 @@ import { TFile } from "../../helpers/obsidian-runtime";
 import { PluginFactory, TaskFactory } from "../../helpers/mock-factories";
 import { TaskService } from "../../../src/services/TaskService";
 import type { TaskInfo } from "../../../src/types";
+import {
+	openOrCreateOccurrenceNote,
+	resolveOccurrenceNoteTargetDate,
+} from "../../../src/ui/occurrenceNoteActions";
 
 jest.mock("../../../src/utils/dateUtils", () => {
 	const actual = jest.requireActual("../../../src/utils/dateUtils");
@@ -104,9 +108,15 @@ describe("TaskService materialized occurrences", () => {
 			}
 		);
 
+		const taskService = new TaskService(plugin);
+		// Mirrors the real plugin, where `plugin.taskService` is the actual TaskService
+		// instance - needed by UI-layer code (e.g. occurrenceNoteActions.ts) that calls
+		// through `plugin.taskService.*` rather than taking a TaskService directly.
+		(plugin as unknown as { taskService: TaskService }).taskService = taskService;
+
 		return {
 			plugin,
-			taskService: new TaskService(plugin),
+			taskService,
 			frontmatterByPath,
 		};
 	}
@@ -446,5 +456,93 @@ describe("TaskService materialized occurrences", () => {
 			scheduled: "2026-06-02",
 		});
 		expect(frontmatterByPath.get(parent.path)?.skipped_instances).toBeUndefined();
+	});
+
+	it("finds an already-materialized occurrence via its own scheduled date, even when opened on a different day", async () => {
+		const parent = TaskFactory.createTask({
+			title: "Weekly task",
+			path: "Tasks/Weekly task.md",
+			recurrence: "DTSTART:20250101;FREQ=WEEKLY",
+			scheduled: "2025-01-08",
+			occurrence_materialization: "on_completion",
+		});
+		const existingOccurrence = TaskFactory.createTask({
+			title: "Weekly task",
+			path: "Tasks/Weekly task 2025-01-08.md",
+			status: "open",
+			recurrence_parent: "[[Tasks/Weekly task]]",
+			occurrence_date: "2025-01-08",
+			scheduled: "2025-01-08",
+		});
+		const { plugin } = createService({
+			[parent.path]: parent,
+			[existingOccurrence.path]: existingOccurrence,
+		});
+
+		// Simulate opening the occurrence note from a plain Task List view, where the
+		// ambient rendering date is always "today" (2025-01-01, per this file's mocked
+		// clock), regardless of the parent's actual scheduled/current occurrence date.
+		const ambientDate = new Date("2025-01-01T00:00:00Z");
+		const result = await openOrCreateOccurrenceNote({
+			plugin,
+			parentTask: parent,
+			targetDate: resolveOccurrenceNoteTargetDate(parent, ambientDate),
+		});
+
+		// Should find and open the already-materialized occurrence for 2025-01-08 -
+		// not fabricate a new one for today.
+		expect(result?.occurrence_date).toBe("2025-01-08");
+		expect(result?.path).toBe(existingOccurrence.path);
+	});
+
+	it("opens the newly materialized occurrence instead of creating a duplicate after completion", async () => {
+		// Scheduled-anchor (the default), not recurrence_anchor: completion - that anchor
+		// mode's completion-date advancement is a separate, independent fix on another
+		// branch. This test only needs the already-correct scheduled-anchor progression
+		// (covered by the "reconciles parent instances..." test above) plus this file's
+		// new occurrence-lookup fix.
+		const parent = TaskFactory.createTask({
+			title: "Daily task",
+			path: "Tasks/Daily task.md",
+			recurrence: "DTSTART:20260601;FREQ=DAILY",
+			scheduled: "2026-06-01",
+			occurrence_materialization: "on_completion",
+		});
+		const occurrence = TaskFactory.createTask({
+			title: "Daily task",
+			path: "Tasks/Daily task 2026-06-01.md",
+			status: "open",
+			recurrence_parent: "[[Tasks/Daily task]]",
+			occurrence_date: "2026-06-01",
+			scheduled: "2026-06-01",
+		});
+		const { taskService, plugin } = createService({
+			[parent.path]: parent,
+			[occurrence.path]: occurrence,
+		});
+
+		// Completing this occurrence advances the parent's scheduled date to 2026-06-02
+		// and correctly materializes that note.
+		await taskService.updateProperty(occurrence, "status", "done");
+
+		const tasksAfterCompletion = await plugin.cacheManager.getAllTasks();
+		const correctNextOccurrence = tasksAfterCompletion.find(
+			(t) => t.recurrence_parent && t.occurrence_date === "2026-06-02"
+		);
+		expect(correctNextOccurrence).toBeDefined();
+
+		const updatedParent = await plugin.cacheManager.getTaskInfo(parent.path);
+
+		// Simulate immediately trying to open the occurrence note afterward, using the
+		// mocked "today" (2025-01-01) - unrelated to the parent's real current occurrence.
+		const ambientDate = new Date("2025-01-01T00:00:00Z");
+		const result = await openOrCreateOccurrenceNote({
+			plugin,
+			parentTask: updatedParent ?? parent,
+			targetDate: resolveOccurrenceNoteTargetDate(updatedParent ?? parent, ambientDate),
+		});
+
+		expect(result?.occurrence_date).toBe("2026-06-02");
+		expect(result?.path).toBe(correctNextOccurrence?.path);
 	});
 });
